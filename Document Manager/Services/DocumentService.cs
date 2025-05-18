@@ -12,15 +12,18 @@ namespace Document_Manager.Services
         private readonly AppDbContextSQL _context;
         private readonly IFileStorageService _fileStorageService;
         private readonly IFileValidationService _fileValidationService;
+        private readonly IFolderService _folderService;
 
         public DocumentService(
             AppDbContextSQL context,
             IFileStorageService fileStorageService,
-            IFileValidationService fileValidationService)
+            IFileValidationService fileValidationService,
+            IFolderService folderService)
         {
             _context = context;
             _fileStorageService = fileStorageService;
             _fileValidationService = fileValidationService;
+            _folderService = folderService;
         }
 
         public async Task<Document> UploadDocumentAsync(DocumentUploadDto documentDto, Guid userId)
@@ -30,6 +33,16 @@ namespace Document_Manager.Services
             if (!validationResult.IsValid)
             {
                 throw new InvalidOperationException(validationResult.Message);
+            }
+            
+            // Check if folder exists and user has access to it
+            if (documentDto.FolderId.HasValue)
+            {
+                bool hasAccess = await _folderService.UserHasAccessToFolder(documentDto.FolderId.Value, userId, true);
+                if (!hasAccess)
+                {
+                    throw new UnauthorizedAccessException("You don't have permission to upload to this folder");
+                }
             }
             
             using var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled);
@@ -49,7 +62,8 @@ namespace Document_Manager.Services
                 IsValidated = true,
                 HasOcr = validationResult.SupportsOcr,
                 Version = 1,
-                IsCurrentVersion = true
+                IsCurrentVersion = true,
+                FolderId = documentDto.FolderId
             };
 
             // Save file to storage
@@ -221,6 +235,131 @@ namespace Document_Manager.Services
             }
 
             return await query.ToListAsync();
+        }
+
+        public async Task<Document?> MoveDocumentAsync(DocumentMoveDto moveDto, Guid userId)
+        {
+            var document = await _context.Documents
+                .Include(d => d.Tags)
+                .FirstOrDefaultAsync(d => d.Id == moveDto.DocumentId && !d.IsDeleted);
+
+            if (document == null)
+            {
+                return null;
+            }
+
+            // Check if user has permission to modify the document
+            var hasPermission = document.CreatedById == userId || 
+                await _context.DocumentAccessibilityListItems
+                    .AnyAsync(a => a.AccessibilityList.DocumentId == moveDto.DocumentId && 
+                                  a.UserId == userId && a.CanEdit);
+
+            if (!hasPermission)
+            {
+                throw new UnauthorizedAccessException("You don't have permission to move/copy this document");
+            }
+
+            // Check if target folder exists and user has access to it
+            if (moveDto.TargetFolderId.HasValue)
+            {
+                bool hasAccess = await _folderService.UserHasAccessToFolder(moveDto.TargetFolderId.Value, userId, true);
+                if (!hasAccess)
+                {
+                    throw new UnauthorizedAccessException("You don't have permission to access the target folder");
+                }
+            }
+
+            if (moveDto.IsCopy)
+            {
+                // Create a copy of the document
+                var newDocument = new Document
+                {
+                    Id = Guid.NewGuid(),
+                    Name = document.Name + " (Copy)",
+                    Description = document.Description,
+                    FilePath = document.FilePath, // Reference the same file
+                    FileType = document.FileType,
+                    ContentType = document.ContentType,
+                    FileSize = document.FileSize,
+                    CreatedById = userId,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow,
+                    IsValidated = document.IsValidated,
+                    HasOcr = document.HasOcr,
+                    OcrText = document.OcrText,
+                    Version = 1,
+                    IsCurrentVersion = true,
+                    FolderId = moveDto.TargetFolderId
+                };
+
+                // Copy tags
+                if (document.Tags != null)
+                {
+                    foreach (var tag in document.Tags)
+                    {
+                        newDocument.Tags.Add(tag);
+                    }
+                }
+
+                // Create new accessibility list for the document copy
+                var accessibilityList = new DocumentAccessibilityList
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = newDocument.Id,
+                    Document = newDocument
+                };
+
+                // Create initial accessibility list item for the document owner
+                var accessibilityListItem = new DocumentAccessibilityListItem
+                {
+                    Id = Guid.NewGuid(),
+                    AccessibilityListId = accessibilityList.Id,
+                    AccessibilityList = accessibilityList,
+                    UserId = userId,
+                    AccessLevel = AccessLevel.Owner,
+                    CanView = true,
+                    CanEdit = true,
+                    CanDownload = true,
+                    CanAnnotate = true,
+                    CanDelete = true,
+                    CanShare = true
+                };
+
+                newDocument.AccessibilityList = accessibilityList;
+                newDocument.AccessibilityListId = accessibilityList.Id;
+
+                // Save to database
+                await _context.Documents.AddAsync(newDocument);
+                await _context.DocumentAccessibilityLists.AddAsync(accessibilityList);
+                await _context.SaveChangesAsync();
+
+                return newDocument;
+            }
+            else
+            {
+                // Move the document to the target folder
+                document.FolderId = moveDto.TargetFolderId;
+                document.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+                return document;
+            }
+        }
+
+        public async Task<List<Document>> GetDocumentsByFolderIdAsync(Guid folderId, Guid userId)
+        {
+            // Check if user has access to the folder
+            bool hasAccess = await _folderService.UserHasAccessToFolder(folderId, userId);
+            if (!hasAccess)
+            {
+                throw new UnauthorizedAccessException("You don't have access to this folder");
+            }
+
+            // Get documents in the specified folder
+            return await _context.Documents
+                .Include(d => d.Tags)
+                .Include(d => d.CreatedBy)
+                .Where(d => d.FolderId == folderId && !d.IsDeleted)
+                .ToListAsync();
         }
     }
 }

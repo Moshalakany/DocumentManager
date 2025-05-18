@@ -11,5 +11,10 @@ namespace Document_Manager.Services.Interfaces
         Task<List<Document>> GetUserDocumentsAsync(Guid userId);
         Task<bool> DeleteDocumentAsync(Guid id, Guid userId);
         Task<FileValidationResultDto> ValidateFileAsync(IFormFile file);
+        Task<List<Document>> SearchDocumentsByTagsAsync(List<Guid> tagIds, Guid userId);
+        
+        // New folder-related document operations
+        Task<Document?> MoveDocumentAsync(DocumentMoveDto moveDto, Guid userId);
+        Task<List<Document>> GetDocumentsByFolderIdAsync(Guid folderId, Guid userId);
     }
 }

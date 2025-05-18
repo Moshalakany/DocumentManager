@@ -13,11 +13,16 @@ namespace Document_Manager.Controllers
     {
         private readonly IDocumentService _documentService;
         private readonly IFileStorageService _fileStorageService;
+        private readonly IAccessControlService _accessControlService;
 
-        public DocumentsController(IDocumentService documentService, IFileStorageService fileStorageService)
+        public DocumentsController(
+            IDocumentService documentService, 
+            IFileStorageService fileStorageService,
+            IAccessControlService accessControlService)
         {
             _documentService = documentService;
             _fileStorageService = fileStorageService;
+            _accessControlService = accessControlService;
         }
 
         [HttpPost("upload")]
@@ -81,19 +86,17 @@ namespace Document_Manager.Controllers
                 return Unauthorized("Invalid user identification");
             }
 
+            // Check if user has view permission using the access control service
+            var canView = await _accessControlService.CanUserViewDocumentAsync(id, userId);
+            if (!canView)
+            {
+                return Forbid("You do not have permission to view this document");
+            }
+
             var document = await _documentService.GetDocumentByIdAsync(id);
             if (document == null)
             {
                 return NotFound();
-            }
-
-            // Check if user has access
-            var hasAccess = document.CreatedById == userId || 
-                document.AccessibilityList?.AccessibilityListItems?.Any(a => a.UserId == userId && a.CanView) == true;
-
-            if (!hasAccess)
-            {
-                return Forbid();
             }
 
             var response = new DocumentResponseDto
@@ -127,19 +130,17 @@ namespace Document_Manager.Controllers
                 return Unauthorized("Invalid user identification");
             }
 
+            // Check if user has download permission using the access control service
+            var canDownload = await _accessControlService.CanUserDownloadDocumentAsync(id, userId);
+            if (!canDownload)
+            {
+                return Forbid("You do not have permission to download this document");
+            }
+
             var document = await _documentService.GetDocumentByIdAsync(id);
             if (document == null)
             {
                 return NotFound();
-            }
-
-            // Check if user has access to download
-            var hasAccess = document.CreatedById == userId || 
-                document.AccessibilityList?.AccessibilityListItems?.Any(a => a.UserId == userId && a.CanDownload) == true;
-
-            if (!hasAccess)
-            {
-                return Forbid();
             }
 
             if (string.IsNullOrEmpty(document.FilePath) || !System.IO.File.Exists(document.FilePath))
@@ -196,6 +197,13 @@ namespace Document_Manager.Controllers
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
             {
                 return Unauthorized("Invalid user identification");
+            }
+
+            // Check if user has delete permission using the access control service
+            var canDelete = await _accessControlService.CanUserDeleteDocumentAsync(id, userId);
+            if (!canDelete)
+            {
+                return Forbid("You do not have permission to delete this document");
             }
 
             var result = await _documentService.DeleteDocumentAsync(id, userId);

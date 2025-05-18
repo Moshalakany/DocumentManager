@@ -20,5 +20,8 @@ namespace Document_Manager.DTOs
         
         // New property for tag IDs
         public List<Guid>? TagIds { get; set; } = new List<Guid>();
+        
+        // New property for folder ID
+        public Guid? FolderId { get; set; }
     }
 }

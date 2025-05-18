@@ -109,6 +109,7 @@ builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IFileValidationService, FileValidationService>();
 builder.Services.AddScoped<ITagService, TagService>();
+builder.Services.AddScoped<IAccessControlService, AccessControlService>();
 builder.Services.AddTransient<FileTypeSeedService>();
 var app = builder.Build();
 

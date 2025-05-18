@@ -1,0 +1,15 @@
+using Document_Manager.DTOs;
+using Document_Manager.Models;
+using Microsoft.AspNetCore.Http;
+
+namespace Document_Manager.Services.Interfaces
+{
+    public interface IDocumentService
+    {
+        Task<Document> UploadDocumentAsync(DocumentUploadDto documentDto, Guid userId);
+        Task<Document?> GetDocumentByIdAsync(Guid id);
+        Task<List<Document>> GetUserDocumentsAsync(Guid userId);
+        Task<bool> DeleteDocumentAsync(Guid id, Guid userId);
+        Task<FileValidationResultDto> ValidateFileAsync(IFormFile file);
+    }
+}

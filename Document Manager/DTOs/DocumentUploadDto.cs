@@ -15,6 +15,10 @@ namespace Document_Manager.DTOs
         [StringLength(500)]
         public string? Description { get; set; }
         
+        // Existing tag names property
         public List<string>? Tags { get; set; } = new List<string>();
+        
+        // New property for tag IDs
+        public List<Guid>? TagIds { get; set; } = new List<Guid>();
     }
 }

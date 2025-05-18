@@ -55,7 +55,7 @@ namespace Document_Manager.Services
             // Save file to storage
             document.FilePath = await _fileStorageService.SaveFileAsync(documentDto.File, document.Id);
 
-            // Process tags
+            // Process tags from names
             if (documentDto.Tags != null && documentDto.Tags.Count > 0)
             {
                 foreach (var tagName in documentDto.Tags)
@@ -75,6 +75,23 @@ namespace Document_Manager.Services
                     }
                     
                     document.Tags.Add(tag);
+                }
+            }
+
+            // Process tags from IDs
+            if (documentDto.TagIds != null && documentDto.TagIds.Count > 0)
+            {
+                var existingTags = await _context.Tags
+                    .Where(t => documentDto.TagIds.Contains(t.Id))
+                    .ToListAsync();
+
+                foreach (var tag in existingTags)
+                {
+                    // Only add if not already added via tag name
+                    if (!document.Tags.Any(t => t.Id == tag.Id))
+                    {
+                        document.Tags.Add(tag);
+                    }
                 }
             }
 
@@ -179,6 +196,31 @@ namespace Document_Manager.Services
         public async Task<FileValidationResultDto> ValidateFileAsync(IFormFile file)
         {
             return await _fileValidationService.ValidateFileAsync(file);
+        }
+
+        public async Task<List<Document>> SearchDocumentsByTagsAsync(List<Guid> tagIds, Guid userId)
+        {
+            // Get documents that have all specified tags and are accessible to the user
+            var query = _context.Documents
+                .Include(d => d.Tags)
+                .Include(d => d.CreatedBy)
+                .Where(d => !d.IsDeleted);
+
+            // Filter by user access
+            query = query.Where(d => 
+                d.CreatedById == userId || 
+                d.AccessibilityList.AccessibilityListItems.Any(a => a.UserId == userId && a.CanView));
+
+            // Filter by tags (documents that have ALL specified tags)
+            if (tagIds != null && tagIds.Count > 0)
+            {
+                foreach (var tagId in tagIds)
+                {
+                    query = query.Where(d => d.Tags.Any(t => t.Id == tagId));
+                }
+            }
+
+            return await query.ToListAsync();
         }
     }
 }

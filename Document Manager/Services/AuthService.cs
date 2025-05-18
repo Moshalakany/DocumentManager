@@ -40,7 +40,7 @@ namespace Document_Manager.Services
             };
         }
 
-        public async Task<User?> RegisterAsync(UserRegisterDto request)
+        public async Task<User?> RegisterAsync(UserDtos request)
         {
             if (await context.Users.AnyAsync(u => u.Username == request.Username)|| await context.Users.AnyAsync(u=>u.Email==request.Email))
             {

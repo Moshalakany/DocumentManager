@@ -12,7 +12,7 @@ namespace Document_Manager.Controllers
     public class AuthController(IAuthService authService) : ControllerBase
     {
         [HttpPost("register")]
-        public async Task<ActionResult<User>> Register(UserRegisterDto request)
+        public async Task<ActionResult<User>> Register(UserDtos request)
         {
             var user = await authService.RegisterAsync(request);
             if (user is null)

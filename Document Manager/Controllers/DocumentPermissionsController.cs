@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 using Document_Manager.DTOs;
 using Document_Manager.Services.Interfaces;
 using System.Security.Claims;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Document_Manager.Controllers
 {
@@ -13,11 +15,16 @@ namespace Document_Manager.Controllers
     {
         private readonly IAccessControlService _accessControlService;
         private readonly IDocumentService _documentService;
+        private readonly ILogger<DocumentPermissionsController> _logger;
 
-        public DocumentPermissionsController(IAccessControlService accessControlService, IDocumentService documentService)
+        public DocumentPermissionsController(
+            IAccessControlService accessControlService, 
+            IDocumentService documentService,
+            ILogger<DocumentPermissionsController> logger)
         {
             _accessControlService = accessControlService;
             _documentService = documentService;
+            _logger = logger;
         }
 
         [HttpGet("{documentId}")]
@@ -55,101 +62,152 @@ namespace Document_Manager.Controllers
         [HttpPost("user")]
         public async Task<IActionResult> AssignDocumentPermissionToUser([FromBody] PermissionAssignmentDto dto)
         {
-            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+            try
             {
-                return Unauthorized("Invalid user identification");
-            }
+                var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized("Invalid user identification");
+                }
 
-            // Check if user can manage permissions
-            if (!await CanManagePermissions(dto.DocumentId, userId))
+                // Check if user can manage permissions
+                if (!await CanManagePermissions(dto.DocumentId, userId))
+                {
+                    return Forbid("You do not have permission to assign document permissions");
+                }
+
+                var result = await _accessControlService.AssignDocumentPermissionToUserAsync(
+                    dto.DocumentId, dto.UserId, dto.Permissions);
+
+                if (!result)
+                {
+                    return NotFound("Document or user not found");
+                }
+
+                return Ok();
+            }
+            catch (DbUpdateConcurrencyException ex)
             {
-                return Forbid("You do not have permission to assign document permissions");
+                _logger.LogError(ex, "Concurrency exception while assigning document permission to user");
+                return StatusCode(409, "The document was modified by another user. Please retry the operation.");
             }
-
-            var result = await _accessControlService.AssignDocumentPermissionToUserAsync(
-                dto.DocumentId, dto.UserId, dto.Permissions);
-
-            if (!result)
+            catch (Exception ex)
             {
-                return NotFound("Document or user not found");
+                _logger.LogError(ex, "Error assigning document permission to user");
+                return StatusCode(500, "An error occurred while processing your request.");
             }
-
-            return Ok();
         }
 
         [HttpPost("group")]
         public async Task<IActionResult> AssignDocumentPermissionToGroup([FromBody] GroupPermissionAssignmentDto dto)
         {
-            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+            try
             {
-                return Unauthorized("Invalid user identification");
-            }
+                var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized("Invalid user identification");
+                }
 
-            // Check if user can manage permissions
-            if (!await CanManagePermissions(dto.DocumentId, userId))
+                if (!await CanManagePermissions(dto.DocumentId, userId))
+                {
+                    return Forbid("You do not have permission to assign document permissions");
+                }
+
+                var result = await _accessControlService.AssignDocumentPermissionToGroupAsync(
+                    dto.DocumentId, dto.GroupId, dto.Permissions);
+
+                if (!result)
+                {
+                    return NotFound("Document or group not found");
+                }
+
+                return Ok();
+            }
+            catch (DbUpdateConcurrencyException ex)
             {
-                return Forbid("You do not have permission to assign document permissions");
+                _logger.LogError(ex, "Concurrency exception while assigning document permission to group");
+                return StatusCode(409, "The document was modified by another user. Please retry the operation.");
             }
-
-            var result = await _accessControlService.AssignDocumentPermissionToGroupAsync(
-                dto.DocumentId, dto.GroupId, dto.Permissions);
-
-            if (!result)
+            catch (Exception ex)
             {
-                return NotFound("Document or group not found");
+                _logger.LogError(ex, "Error assigning document permission to group");
+                return StatusCode(500, "An error occurred while processing your request.");
             }
-
-            return Ok();
         }
 
         [HttpDelete("{documentId}/user/{targetUserId}")]
         public async Task<IActionResult> RemoveDocumentPermissionForUser(Guid documentId, Guid targetUserId)
         {
-            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+            try
             {
-                return Unauthorized("Invalid user identification");
-            }
+                var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized("Invalid user identification");
+                }
 
-            // Check if user can manage permissions
-            if (!await CanManagePermissions(documentId, userId))
+                // Check if user can manage permissions
+                if (!await CanManagePermissions(documentId, userId))
+                {
+                    return Forbid("You do not have permission to remove document permissions");
+                }
+
+                var result = await _accessControlService.RemoveDocumentPermissionForUserAsync(documentId, targetUserId);
+                if (!result)
+                {
+                    return NotFound("Document permission not found");
+                }
+
+                return NoContent();
+            }
+            catch (DbUpdateConcurrencyException ex)
             {
-                return Forbid("You do not have permission to remove document permissions");
+                _logger.LogError(ex, "Concurrency exception while removing document permission for user");
+                return StatusCode(409, "The document was modified by another user. Please retry the operation.");
             }
-
-            var result = await _accessControlService.RemoveDocumentPermissionForUserAsync(documentId, targetUserId);
-            if (!result)
+            catch (Exception ex)
             {
-                return NotFound("Document permission not found");
+                _logger.LogError(ex, "Error removing document permission for user");
+                return StatusCode(500, "An error occurred while processing your request.");
             }
-
-            return NoContent();
         }
 
         [HttpDelete("{documentId}/group/{groupId}")]
         public async Task<IActionResult> RemoveDocumentPermissionForGroup(Guid documentId, int groupId)
         {
-            var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+            try
             {
-                return Unauthorized("Invalid user identification");
-            }
+                var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+                {
+                    return Unauthorized("Invalid user identification");
+                }
 
-            // Check if user can manage permissions
-            if (!await CanManagePermissions(documentId, userId))
+                // Check if user can manage permissions
+                if (!await CanManagePermissions(documentId, userId))
+                {
+                    return Forbid("You do not have permission to remove document permissions");
+                }
+
+                var result = await _accessControlService.RemoveDocumentPermissionForGroupAsync(documentId, groupId);
+                if (!result)
+                {
+                    return NotFound("Group or document not found");
+                }
+
+                return NoContent();
+            }
+            catch (DbUpdateConcurrencyException ex)
             {
-                return Forbid("You do not have permission to remove document permissions");
+                _logger.LogError(ex, "Concurrency exception while removing document permission for group");
+                return StatusCode(409, "The document was modified by another user. Please retry the operation.");
             }
-
-            var result = await _accessControlService.RemoveDocumentPermissionForGroupAsync(documentId, groupId);
-            if (!result)
+            catch (Exception ex)
             {
-                return NotFound("Group or document not found");
+                _logger.LogError(ex, "Error removing document permission for group");
+                return StatusCode(500, "An error occurred while processing your request.");
             }
-
-            return NoContent();
         }
 
         [HttpGet("{documentId}/permissions")]

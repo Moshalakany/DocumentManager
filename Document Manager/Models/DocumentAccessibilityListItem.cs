@@ -23,7 +23,6 @@
         public Guid UserId { get; set; }
         public AccessLevel AccessLevel { get; set; }
         
-        // Enhanced permissions model
         public bool CanView { get; set; } = false;
         public bool CanEdit { get; set; } = false;
         public bool CanDownload { get; set; } = false;
@@ -36,13 +35,12 @@
         public User? User { get; set; }
     }
 
-    // Add this if it doesn't exist in another file
     public enum AccessLevel
     {
-        View,       // Can only view
-        Download,   // Can view and download
-        Comment,    // Can view, download, and comment
-        Edit,       // Can view, download, comment, and edit
-        Owner       // Full access, including sharing and deleting
+        View,      
+        Download,   
+        Comment,   
+        Edit,       
+        Owner       
     }
 }

@@ -61,7 +61,7 @@ builder.Services.AddDbContextPool<AppDbContextSQL>(
         connectionString:builder.Configuration.GetValue<string>("SqlConnectionStrings")));
 builder.Services.AddDbContextPool<AppDbContextMongo>(
     options => options.UseMongoDB(
-        connectionString: builder.Configuration.GetValue<string>("MongoConnectionStrings")!,
+        connectionString: builder.Configuration.GetValue<string>("MongoConnectionStri   ngs")!,
         databaseName:builder.Configuration.GetValue<string>("MongoDbName")!
         ));
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -111,6 +111,7 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IFileValidationService, FileValidationService>();
 builder.Services.AddScoped<ITagService, TagService>();
 builder.Services.AddScoped<IAccessControlService, AccessControlService>();
+builder.Services.AddScoped<IGroupService, GroupService>();
 builder.Services.AddTransient<FileTypeSeedService>();
 var app = builder.Build();
 

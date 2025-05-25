@@ -9,15 +9,16 @@ namespace Document_Manager.DTOs
         public long FileSize { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
-        public UserSummaryDto CreatedBy { get; set; }
+        public DocumentUserSummaryDto CreatedBy { get; set; }
         public IEnumerable<string> Tags { get; set; } = new List<string>();
         public int Version { get; set; }
     }
 
-    public class UserSummaryDto
+    public class DocumentUserSummaryDto
     {
         public Guid UserId { get; set; }
         public string Username { get; set; }
         public string? Email { get; set; }
+        public string Role { get; set; } = string.Empty;
     }
 }

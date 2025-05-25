@@ -61,11 +61,12 @@ namespace Document_Manager.Controllers
                     UpdatedAt = document.UpdatedAt,
                     Version = document.Version,
                     Tags = document.Tags?.Select(t => t.Name) ?? new List<string>(),
-                    CreatedBy = new UserSummaryDto
+                    CreatedBy = new DocumentUserSummaryDto
                     {
                         UserId = document.CreatedById.Value,
                         Username = document.CreatedBy?.Username ?? "Unknown",
-                        Email = document.CreatedBy?.Email
+                        Email = document.CreatedBy?.Email ?? string.Empty,
+                        Role = document.CreatedBy?.Role ?? string.Empty
                     }
                 };
 
@@ -110,11 +111,12 @@ namespace Document_Manager.Controllers
                 UpdatedAt = document.UpdatedAt,
                 Version = document.Version,
                 Tags = document.Tags?.Select(t => t.Name) ?? new List<string>(),
-                CreatedBy = new UserSummaryDto
+                CreatedBy = new DocumentUserSummaryDto
                 {
                     UserId = document.CreatedById.Value,
                     Username = document.CreatedBy?.Username ?? "Unknown",
-                    Email = document.CreatedBy?.Email
+                    Email = document.CreatedBy?.Email ?? string.Empty,
+                    Role = document.CreatedBy?.Role ?? string.Empty
                 }
             };
 
@@ -179,11 +181,12 @@ namespace Document_Manager.Controllers
                 UpdatedAt = document.UpdatedAt,
                 Version = document.Version,
                 Tags = document.Tags?.Select(t => t.Name) ?? new List<string>(),
-                CreatedBy = new UserSummaryDto
+                CreatedBy = new DocumentUserSummaryDto
                 {
                     UserId = document.CreatedById.Value,
                     Username = document.CreatedBy?.Username ?? "Unknown",
-                    Email = document.CreatedBy?.Email
+                    Email = document.CreatedBy?.Email ?? string.Empty,
+                    Role = document.CreatedBy?.Role ?? string.Empty
                 }
             });
 

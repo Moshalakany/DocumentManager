@@ -9,15 +9,163 @@ namespace Document_Manager.Services
     public class AccessControlService : IAccessControlService
     {
         private readonly AppDbContextSQL _context;
+        private readonly int _maxRetries = 3;
 
         public AccessControlService(AppDbContextSQL context)
         {
             _context = context;
         }
 
-        // Document permissions
         public async Task<bool> AssignDocumentPermissionToUserAsync(Guid documentId, Guid userId, PermissionDto permissions)
         {
+            int retryCount = 0;
+            bool succeeded = false;
+
+            while (!succeeded && retryCount < _maxRetries)
+            {
+                try
+                {
+                    using var transaction = await _context.Database.BeginTransactionAsync();
+                    var document = await _context.Documents
+                        .Include(d => d.AccessibilityList)
+                        .ThenInclude(a => a.AccessibilityListItems)
+                        .FirstOrDefaultAsync(d => d.Id == documentId);
+
+                    if (document == null)
+                        return false;
+
+                    if (document.AccessibilityList == null)
+                    {
+                        document.AccessibilityList = new DocumentAccessibilityList
+                        {
+                            Id = Guid.NewGuid(),
+                            DocumentId = documentId,
+                            AccessibilityListItems = new List<DocumentAccessibilityListItem>()
+                        };
+                    }
+
+                    var existingPermission = document.AccessibilityList.AccessibilityListItems?
+                        .FirstOrDefault(a => a.UserId == userId);
+
+                    if (existingPermission != null)
+                    {
+                        existingPermission.CanView = permissions.CanView;
+                        existingPermission.CanEdit = permissions.CanEdit;
+                        existingPermission.CanDownload = permissions.CanDownload;
+                        existingPermission.CanAnnotate = permissions.CanAnnotate;
+                        existingPermission.CanDelete = permissions.CanDelete;
+                        existingPermission.CanShare = permissions.CanShare;
+                        existingPermission.AccessLevel = permissions.GetAccessLevel();
+                    }
+                    else
+                    {
+                        var accessListItem = new DocumentAccessibilityListItem
+                        {
+                            Id = Guid.NewGuid(),
+                            AccessibilityListId = document.AccessibilityList.Id,
+                            UserId = userId,
+                            CanView = permissions.CanView,
+                            CanEdit = permissions.CanEdit,
+                            CanDownload = permissions.CanDownload,
+                            CanAnnotate = permissions.CanAnnotate,
+                            CanDelete = permissions.CanDelete,
+                            CanShare = permissions.CanShare,
+                            AccessLevel = permissions.GetAccessLevel()
+                        };
+
+                        document.AccessibilityList.AccessibilityListItems?.Add(accessListItem);
+                    }
+
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    
+                    succeeded = true;
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    _context.ChangeTracker.Clear();
+                    
+                    retryCount++;
+                    if (retryCount >= _maxRetries)
+                        throw; 
+                }
+                catch (Exception)
+                {
+                    throw;
+                }
+            }
+
+            return succeeded;
+        }
+
+        public async Task<bool> AssignDocumentPermissionToGroupAsync(Guid documentId, int groupId, PermissionDto permissions)
+        {
+            int retryCount = 0;
+            bool succeeded = false;
+
+            while (!succeeded && retryCount < _maxRetries)
+            {
+                try
+                {
+                    using var transaction = await _context.Database.BeginTransactionAsync();
+                    
+                    // Get fresh group data
+                    var group = await _context.GroupPermissions
+                        .AsNoTracking()  // Use AsNoTracking to avoid interference with tracked entities
+                        .Include(g => g.GroupPermissionUsers)
+                        .FirstOrDefaultAsync(g => g.Id == groupId);
+
+                    if (group == null)
+                        return false;
+
+                    // Document existence check
+                    var documentExists = await _context.Documents.AnyAsync(d => d.Id == documentId);
+                    if (!documentExists)
+                        return false;
+
+                    bool allSucceeded = true;
+                    foreach (var userGroup in group.GroupPermissionUsers)
+                    {
+                        // For each user, we assign permissions in a separate operation but within the same transaction
+                        var result = await AssignDocumentPermissionToUserWithoutTransactionAsync(
+                            documentId, userGroup.UserId, permissions);
+                        if (!result) allSucceeded = false;
+                    }
+
+                    if (allSucceeded)
+                    {
+                        await transaction.CommitAsync();
+                        succeeded = true;
+                    }
+                    else
+                    {
+                        await transaction.RollbackAsync();
+                        return false;
+                    }
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Clear the change tracker to remove stale entities
+                    _context.ChangeTracker.Clear();
+                    
+                    retryCount++;
+                    if (retryCount >= _maxRetries)
+                        throw;
+                }
+                catch (Exception)
+                {
+                    throw;
+                }
+            }
+
+            return succeeded;
+        }
+
+        // Helper method for use within a transaction
+        private async Task<bool> AssignDocumentPermissionToUserWithoutTransactionAsync(
+            Guid documentId, Guid userId, PermissionDto permissions)
+        {
+            // Get fresh document data
             var document = await _context.Documents
                 .Include(d => d.AccessibilityList)
                 .ThenInclude(a => a.AccessibilityListItems)
@@ -26,7 +174,6 @@ namespace Document_Manager.Services
             if (document == null)
                 return false;
 
-            // Create accessibility list if it doesn't exist
             if (document.AccessibilityList == null)
             {
                 document.AccessibilityList = new DocumentAccessibilityList
@@ -43,7 +190,6 @@ namespace Document_Manager.Services
 
             if (existingPermission != null)
             {
-                // Update existing permission
                 existingPermission.CanView = permissions.CanView;
                 existingPermission.CanEdit = permissions.CanEdit;
                 existingPermission.CanDownload = permissions.CanDownload;
@@ -54,7 +200,6 @@ namespace Document_Manager.Services
             }
             else
             {
-                // Add new permission
                 var accessListItem = new DocumentAccessibilityListItem
                 {
                     Id = Guid.NewGuid(),
@@ -76,33 +221,117 @@ namespace Document_Manager.Services
             return true;
         }
 
-        public async Task<bool> AssignDocumentPermissionToGroupAsync(Guid documentId, int groupId, PermissionDto permissions)
-        {
-            var document = await _context.Documents
-                .Include(d => d.AccessibilityList)
-                .FirstOrDefaultAsync(d => d.Id == documentId);
-
-            if (document == null)
-                return false;
-
-            var group = await _context.GroupPermissions
-                .Include(g => g.GroupPermissionUsers)
-                .FirstOrDefaultAsync(g => g.Id == groupId);
-
-            if (group == null)
-                return false;
-
-            // For each user in the group, assign the permissions
-            foreach (var userGroup in group.GroupPermissionUsers)
-            {
-                await AssignDocumentPermissionToUserAsync(documentId, userGroup.UserId, permissions);
-            }
-
-            return true;
-        }
-
         public async Task<bool> RemoveDocumentPermissionForUserAsync(Guid documentId, Guid userId)
         {
+            int retryCount = 0;
+            bool succeeded = false;
+
+            while (!succeeded && retryCount < _maxRetries)
+            {
+                try
+                {
+                    using var transaction = await _context.Database.BeginTransactionAsync();
+                    
+                    var document = await _context.Documents
+                        .Include(d => d.AccessibilityList)
+                        .ThenInclude(a => a.AccessibilityListItems)
+                        .FirstOrDefaultAsync(d => d.Id == documentId);
+
+                    if (document?.AccessibilityList?.AccessibilityListItems == null)
+                        return false;
+
+                    var permission = document.AccessibilityList.AccessibilityListItems
+                        .FirstOrDefault(a => a.UserId == userId);
+
+                    if (permission == null)
+                        return false;
+
+                    document.AccessibilityList.AccessibilityListItems.Remove(permission);
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    
+                    succeeded = true;
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Clear the change tracker to remove stale entities
+                    _context.ChangeTracker.Clear();
+                    
+                    retryCount++;
+                    if (retryCount >= _maxRetries)
+                        throw;
+                }
+                catch (Exception)
+                {
+                    throw;
+                }
+            }
+
+            return succeeded;
+        }
+
+        public async Task<bool> RemoveDocumentPermissionForGroupAsync(Guid documentId, int groupId)
+        {
+            int retryCount = 0;
+            bool succeeded = false;
+
+            while (!succeeded && retryCount < _maxRetries)
+            {
+                try
+                {
+                    using var transaction = await _context.Database.BeginTransactionAsync();
+                    
+                    // Get fresh group data
+                    var group = await _context.GroupPermissions
+                        .AsNoTracking()  // Use AsNoTracking to avoid interference with tracked entities
+                        .Include(g => g.GroupPermissionUsers)
+                        .FirstOrDefaultAsync(g => g.Id == groupId);
+
+                    if (group?.GroupPermissionUsers == null)
+                        return false;
+
+                    bool allSucceeded = true;
+                    // For each user in the group, remove the permissions
+                    foreach (var userGroup in group.GroupPermissionUsers)
+                    {
+                        var result = await RemoveDocumentPermissionForUserWithoutTransactionAsync(
+                            documentId, userGroup.UserId);
+                        if (!result) allSucceeded = false;
+                    }
+
+                    if (allSucceeded)
+                    {
+                        await transaction.CommitAsync();
+                        succeeded = true;
+                    }
+                    else
+                    {
+                        await transaction.RollbackAsync();
+                        return false;
+                    }
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Clear the change tracker to remove stale entities
+                    _context.ChangeTracker.Clear();
+                    
+                    retryCount++;
+                    if (retryCount >= _maxRetries)
+                        throw;
+                }
+                catch (Exception)
+                {
+                    throw;
+                }
+            }
+
+            return succeeded;
+        }
+
+        // Helper method for use within a transaction
+        private async Task<bool> RemoveDocumentPermissionForUserWithoutTransactionAsync(Guid documentId, Guid userId)
+        {
+            // Get fresh document data
             var document = await _context.Documents
                 .Include(d => d.AccessibilityList)
                 .ThenInclude(a => a.AccessibilityListItems)
@@ -115,28 +344,10 @@ namespace Document_Manager.Services
                 .FirstOrDefault(a => a.UserId == userId);
 
             if (permission == null)
-                return false;
+                return true; // Permission already doesn't exist, consider this a success
 
             document.AccessibilityList.AccessibilityListItems.Remove(permission);
             await _context.SaveChangesAsync();
-            return true;
-        }
-
-        public async Task<bool> RemoveDocumentPermissionForGroupAsync(Guid documentId, int groupId)
-        {
-            var group = await _context.GroupPermissions
-                .Include(g => g.GroupPermissionUsers)
-                .FirstOrDefaultAsync(g => g.Id == groupId);
-
-            if (group?.GroupPermissionUsers == null)
-                return false;
-
-            // For each user in the group, remove the permissions
-            foreach (var userGroup in group.GroupPermissionUsers)
-            {
-                await RemoveDocumentPermissionForUserAsync(documentId, userGroup.UserId);
-            }
-
             return true;
         }
 
@@ -178,9 +389,7 @@ namespace Document_Manager.Services
             if (user == null)
                 return new List<DocumentPermissionDto>();
 
-            // Get all documents where:
-            // 1. User is the owner
-            // 2. User has explicit permissions
+
             var documents = await _context.Documents
                 .Include(d => d.AccessibilityList)
                 .ThenInclude(a => a.AccessibilityListItems)
@@ -215,108 +424,87 @@ namespace Document_Manager.Services
                                 CanDelete = permission.CanDelete,
                                 CanShare = permission.CanShare
                             }
-                            : new PermissionDto { CanView = true } // Default view permission
+                            : new PermissionDto { CanView = true } 
                 });
             }
 
             return result;
         }
 
-        // Authorization check methods
         public async Task<bool> CanUserViewDocumentAsync(Guid documentId, Guid userId)
         {
-            // Admin can view all documents
             if (await IsUserAdminAsync(userId))
                 return true;
 
-            // Document owner can view document
             if (await IsDocumentOwnerAsync(documentId, userId))
                 return true;
 
-            // Check explicit permissions
             var permissions = await GetUserDocumentPermissionsAsync(documentId, userId);
             return permissions.CanView;
         }
 
         public async Task<bool> CanUserEditDocumentAsync(Guid documentId, Guid userId)
         {
-            // Admin can edit all documents
             if (await IsUserAdminAsync(userId))
                 return true;
 
-            // Document owner can edit document
             if (await IsDocumentOwnerAsync(documentId, userId))
                 return true;
 
-            // Check explicit permissions
             var permissions = await GetUserDocumentPermissionsAsync(documentId, userId);
             return permissions.CanEdit;
         }
 
         public async Task<bool> CanUserDownloadDocumentAsync(Guid documentId, Guid userId)
         {
-            // Admin can download all documents
             if (await IsUserAdminAsync(userId))
                 return true;
 
-            // Document owner can download document
             if (await IsDocumentOwnerAsync(documentId, userId))
                 return true;
 
-            // Check explicit permissions
             var permissions = await GetUserDocumentPermissionsAsync(documentId, userId);
             return permissions.CanDownload;
         }
 
         public async Task<bool> CanUserDeleteDocumentAsync(Guid documentId, Guid userId)
         {
-            // Admin can delete all documents
             if (await IsUserAdminAsync(userId))
                 return true;
 
-            // Document owner can delete document
             if (await IsDocumentOwnerAsync(documentId, userId))
                 return true;
 
-            // Check explicit permissions
             var permissions = await GetUserDocumentPermissionsAsync(documentId, userId);
             return permissions.CanDelete;
         }
 
         public async Task<bool> CanUserShareDocumentAsync(Guid documentId, Guid userId)
         {
-            // Admin can share all documents
             if (await IsUserAdminAsync(userId))
                 return true;
 
-            // Document owner can share document
             if (await IsDocumentOwnerAsync(documentId, userId))
                 return true;
 
-            // Check explicit permissions
             var permissions = await GetUserDocumentPermissionsAsync(documentId, userId);
             return permissions.CanShare;
         }
 
         public async Task<bool> CanUserAnnotateDocumentAsync(Guid documentId, Guid userId)
         {
-            // Admin can annotate all documents
             if (await IsUserAdminAsync(userId))
                 return true;
 
-            // Document owner can annotate document
             if (await IsDocumentOwnerAsync(documentId, userId))
                 return true;
 
-            // Check explicit permissions
             var permissions = await GetUserDocumentPermissionsAsync(documentId, userId);
             return permissions.CanAnnotate;
         }
 
-        // Helper methods
         public async Task<PermissionDto> GetUserDocumentPermissionsAsync(Guid documentId, Guid userId)
         {
-            // If user is admin, they have all permissions
             if (await IsUserAdminAsync(userId))
             {
                 return new PermissionDto
@@ -330,7 +518,6 @@ namespace Document_Manager.Services
                 };
             }
 
-            // If user is document owner, they have all permissions
             if (await IsDocumentOwnerAsync(documentId, userId))
             {
                 return new PermissionDto
